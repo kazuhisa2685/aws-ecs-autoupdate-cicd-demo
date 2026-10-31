@@ -1,0 +1,99 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: ALB with production listener (Blue) and test listener (Green)
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: bg-demo
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+  PublicSubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: Public subnets in 2 or more AZs
+  CloudFrontPrefixListId:
+    Type: String
+    Default: pl-58a04531
+    Description: >-
+      com.amazonaws.global.cloudfront.origin-facing managed prefix list ID.
+      The default is for ap-northeast-1 (Tokyo). Verify per region with
+      `aws ec2 describe-managed-prefix-lists --filters Name=prefix-list-name,Values=com.amazonaws.global.cloudfront.origin-facing`
+  TestListenerPort:
+    Type: Number
+    Default: 8080
+  TestAllowedCidr:
+    Type: String
+    Default: 10.0.0.0/8
+    Description: CIDR allowed to reach the test listener (Green verification)
+
+Resources:
+  AlbSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub "${ProjectName} ALB security group"
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          SourcePrefixListId: !Ref CloudFrontPrefixListId
+          Description: Production traffic from CloudFront only
+        - IpProtocol: tcp
+          FromPort: !Ref TestListenerPort
+          ToPort: !Ref TestListenerPort
+          CidrIp: !Ref TestAllowedCidr
+          Description: Test traffic for Green verification
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-alb-sg"
+
+  LoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: !Sub "${ProjectName}-alb"
+      Type: application
+      Scheme: internet-facing
+      Subnets: !Ref PublicSubnetIds
+      SecurityGroups:
+        - !Ref AlbSecurityGroup
+
+  ProdListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref LoadBalancer
+      Port: 80
+      Protocol: HTTP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !ImportValue
+            Fn::Sub: "${ProjectName}-tg-blue-arn"
+
+  TestListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref LoadBalancer
+      Port: !Ref TestListenerPort
+      Protocol: HTTP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !ImportValue
+            Fn::Sub: "${ProjectName}-tg-green-arn"
+
+Outputs:
+  LoadBalancerArn:
+    Value: !Ref LoadBalancer
+  LoadBalancerDnsName:
+    Value: !GetAtt LoadBalancer.DNSName
+    Export:
+      Name: !Sub "${ProjectName}-alb-dns"
+  AlbSecurityGroupId:
+    Value: !Ref AlbSecurityGroup
+    Export:
+      Name: !Sub "${ProjectName}-alb-sg-id"
+  ProdListenerArn:
+    Value: !Ref ProdListener
+    Export:
+      Name: !Sub "${ProjectName}-alb-prod-listener-arn"
+  TestListenerArn:
+    Value: !Ref TestListener
+    Export:
+      Name: !Sub "${ProjectName}-alb-test-listener-arn"

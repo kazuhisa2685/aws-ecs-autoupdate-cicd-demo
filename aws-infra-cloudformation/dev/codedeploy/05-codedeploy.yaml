@@ -1,0 +1,100 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: CodeDeploy application and deployment group for ECS Blue/Green
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: bg-demo
+  DeploymentConfigName:
+    Type: String
+    Default: CodeDeployDefault.ECSAllAtOnce
+    AllowedValues:
+      - CodeDeployDefault.ECSAllAtOnce
+      - CodeDeployDefault.ECSLinear10PercentEvery1Minutes
+      - CodeDeployDefault.ECSLinear10PercentEvery3Minutes
+      - CodeDeployDefault.ECSCanary10Percent5Minutes
+      - CodeDeployDefault.ECSCanary10Percent15Minutes
+  TerminationWaitMinutes:
+    Type: Number
+    Default: 5
+    Description: Minutes to keep the old (Blue) tasks after a successful deployment
+
+Resources:
+  CodeDeployServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ProjectName}-codedeploy-role"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codedeploy.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AWSCodeDeployRoleForECS
+
+  Application:
+    Type: AWS::CodeDeploy::Application
+    Properties:
+      ApplicationName: !Sub "${ProjectName}-app"
+      ComputePlatform: ECS
+
+  DeploymentGroup:
+    Type: AWS::CodeDeploy::DeploymentGroup
+    Properties:
+      ApplicationName: !Ref Application
+      DeploymentGroupName: !Sub "${ProjectName}-dg"
+      ServiceRoleArn: !GetAtt CodeDeployServiceRole.Arn
+      DeploymentConfigName: !Ref DeploymentConfigName
+      DeploymentStyle:
+        DeploymentType: BLUE_GREEN
+        DeploymentOption: WITH_TRAFFIC_CONTROL
+      AutoRollbackConfiguration:
+        Enabled: true
+        Events:
+          - DEPLOYMENT_FAILURE
+      BlueGreenDeploymentConfiguration:
+        DeploymentReadyOption:
+          ActionOnTimeout: CONTINUE_DEPLOYMENT
+        TerminateBlueInstancesOnDeploymentSuccess:
+          Action: TERMINATE
+          TerminationWaitTimeInMinutes: !Ref TerminationWaitMinutes
+      ECSServices:
+        - ClusterName: !ImportValue
+            Fn::Sub: "${ProjectName}-ecs-cluster-name"
+          ServiceName: !ImportValue
+            Fn::Sub: "${ProjectName}-ecs-service-name"
+      LoadBalancerInfo:
+        TargetGroupPairInfoList:
+          - TargetGroups:
+              - Name: !ImportValue
+                  Fn::Sub: "${ProjectName}-tg-blue-name"
+              - Name: !ImportValue
+                  Fn::Sub: "${ProjectName}-tg-green-name"
+            ProdTrafficRoute:
+              ListenerArns:
+                - !ImportValue
+                  Fn::Sub: "${ProjectName}-alb-prod-listener-arn"
+            TestTrafficRoute:
+              ListenerArns:
+                - !ImportValue
+                  Fn::Sub: "${ProjectName}-alb-test-listener-arn"
+
+Outputs:
+  ApplicationName:
+    Value: !Ref Application
+    Export:
+      Name: !Sub "${ProjectName}-codedeploy-app-name"
+  DeploymentGroupName:
+    Value: !Ref DeploymentGroup
+    Export:
+      Name: !Sub "${ProjectName}-codedeploy-dg-name"
+  ApplicationArn:
+    Value: !Sub "arn:${AWS::Partition}:codedeploy:${AWS::Region}:${AWS::AccountId}:application:${Application}"
+    Export:
+      Name: !Sub "${ProjectName}-codedeploy-app-arn"
+  DeploymentGroupArn:
+    Value: !Sub "arn:${AWS::Partition}:codedeploy:${AWS::Region}:${AWS::AccountId}:deploymentgroup:${Application}/${DeploymentGroup}"
+    Export:
+      Name: !Sub "${ProjectName}-codedeploy-dg-arn"
