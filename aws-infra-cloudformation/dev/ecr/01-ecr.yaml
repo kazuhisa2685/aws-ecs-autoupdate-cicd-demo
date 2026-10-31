@@ -1,0 +1,49 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: ECR repository for container images
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: bg-demo
+    Description: Prefix used for resource names and export names
+
+Resources:
+  Repository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Sub "${ProjectName}-app"
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      ImageTagMutability: MUTABLE
+      EncryptionConfiguration:
+        EncryptionType: AES256
+      LifecyclePolicy:
+        LifecyclePolicyText: |
+          {
+            "rules": [
+              {
+                "rulePriority": 1,
+                "description": "Keep last 30 images",
+                "selection": {
+                  "tagStatus": "any",
+                  "countType": "imageCountMoreThan",
+                  "countNumber": 30
+                },
+                "action": { "type": "expire" }
+              }
+            ]
+          }
+
+Outputs:
+  RepositoryName:
+    Value: !Ref Repository
+    Export:
+      Name: !Sub "${ProjectName}-ecr-name"
+  RepositoryArn:
+    Value: !GetAtt Repository.Arn
+    Export:
+      Name: !Sub "${ProjectName}-ecr-arn"
+  RepositoryUri:
+    Value: !GetAtt Repository.RepositoryUri
+    Export:
+      Name: !Sub "${ProjectName}-ecr-uri"
